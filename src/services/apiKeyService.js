@@ -270,7 +270,7 @@ class ApiKeyService {
   }
 
   // 📊 记录使用情况（支持缓存token和账户级别统计）
-  async recordUsage(keyId, inputTokens = 0, outputTokens = 0, cacheCreateTokens = 0, cacheReadTokens = 0, model = 'unknown', accountId = null) {
+  async recordUsage(keyId, inputTokens = 0, outputTokens = 0, cacheCreateTokens = 0, cacheReadTokens = 0, model = 'unknown', accountId = null, cacheTTL = '5m') {
     try {
       const totalTokens = inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens;
       
@@ -280,16 +280,17 @@ class ApiKeyService {
         input_tokens: inputTokens,
         output_tokens: outputTokens,
         cache_creation_input_tokens: cacheCreateTokens,
-        cache_read_input_tokens: cacheReadTokens
+        cache_read_input_tokens: cacheReadTokens,
+        cache_ttl: cacheTTL
       }, model);
       
-      // 记录API Key级别的使用统计
-      await redis.incrementTokenUsage(keyId, totalTokens, inputTokens, outputTokens, cacheCreateTokens, cacheReadTokens, model);
+      // 记录API Key级别的使用统计（包含TTL信息）
+      await redis.incrementTokenUsage(keyId, totalTokens, inputTokens, outputTokens, cacheCreateTokens, cacheReadTokens, model, cacheTTL);
       
       // 记录费用统计
       if (costInfo.costs.total > 0) {
         await redis.incrementDailyCost(keyId, costInfo.costs.total);
-        logger.database(`💰 Recorded cost for ${keyId}: $${costInfo.costs.total.toFixed(6)}, model: ${model}`);
+        logger.database(`💰 Recorded cost for ${keyId}: $${costInfo.costs.total.toFixed(6)}, model: ${model}, cacheTTL: ${cacheTTL}`);
       } else {
         logger.debug(`💰 No cost recorded for ${keyId} - zero cost for model: ${model}`);
       }
@@ -303,8 +304,8 @@ class ApiKeyService {
         
         // 记录账户级别的使用统计（只统计实际处理请求的账户）
         if (accountId) {
-          await redis.incrementAccountUsage(accountId, totalTokens, inputTokens, outputTokens, cacheCreateTokens, cacheReadTokens, model);
-          logger.database(`📊 Recorded account usage: ${accountId} - ${totalTokens} tokens (API Key: ${keyId})`);
+          await redis.incrementAccountUsage(accountId, totalTokens, inputTokens, outputTokens, cacheCreateTokens, cacheReadTokens, model, cacheTTL);
+          logger.database(`📊 Recorded account usage: ${accountId} - ${totalTokens} tokens (API Key: ${keyId}, cacheTTL: ${cacheTTL})`);
         } else {
           logger.debug('⚠️ No accountId provided for usage recording, skipping account-level statistics');
         }

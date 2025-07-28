@@ -157,7 +157,7 @@ class RedisClient {
   }
 
   // 📊 使用统计相关操作（支持缓存token统计和模型信息）
-  async incrementTokenUsage(keyId, tokens, inputTokens = 0, outputTokens = 0, cacheCreateTokens = 0, cacheReadTokens = 0, model = 'unknown') {
+  async incrementTokenUsage(keyId, tokens, inputTokens = 0, outputTokens = 0, cacheCreateTokens = 0, cacheReadTokens = 0, model = 'unknown', cacheTTL = '5m') {
     const key = `usage:${keyId}`;
     const now = new Date();
     const today = getDateStringInTimezone(now);
@@ -280,10 +280,25 @@ class RedisClient {
       this.client.expire(keyModelMonthly, 86400 * 365), // API Key模型每月统计1年过期
       this.client.expire(keyModelHourly, 86400 * 7) // API Key模型小时统计7天过期
     ]);
+
+    // TTL分级统计（仅在有缓存创建token时）
+    if (finalCacheCreateTokens > 0) {
+      const ttlKey = cacheTTL === '1h' 
+        ? `usage:cache1h:daily:${keyId}:${today}`
+        : `usage:cache5m:daily:${keyId}:${today}`;
+      
+      await Promise.all([
+        this.client.hincrby(ttlKey, 'tokens', finalCacheCreateTokens),
+        this.client.hincrby(ttlKey, 'requests', 1),
+        this.client.expire(ttlKey, 86400 * 32) // 32天过期
+      ]);
+      
+      logger.debug(`📊 Recorded cache TTL usage: ${cacheTTL} - ${finalCacheCreateTokens} tokens`);
+    }
   }
 
   // 📊 记录账户级别的使用统计
-  async incrementAccountUsage(accountId, totalTokens, inputTokens = 0, outputTokens = 0, cacheCreateTokens = 0, cacheReadTokens = 0, model = 'unknown') {
+  async incrementAccountUsage(accountId, totalTokens, inputTokens = 0, outputTokens = 0, cacheCreateTokens = 0, cacheReadTokens = 0, model = 'unknown', cacheTTL = '5m') {
     const now = new Date();
     const today = getDateStringInTimezone(now);
     const tzDate = getDateInTimezone(now);
@@ -378,6 +393,21 @@ class RedisClient {
       this.client.expire(accountModelMonthly, 86400 * 365), // 1年过期
       this.client.expire(accountModelHourly, 86400 * 7) // 7天过期
     ]);
+
+    // 账户级别的TTL分级统计（仅在有缓存创建token时）
+    if (finalCacheCreateTokens > 0) {
+      const ttlKey = cacheTTL === '1h' 
+        ? `account_usage:cache1h:daily:${accountId}:${today}`
+        : `account_usage:cache5m:daily:${accountId}:${today}`;
+      
+      await Promise.all([
+        this.client.hincrby(ttlKey, 'tokens', finalCacheCreateTokens),
+        this.client.hincrby(ttlKey, 'requests', 1),
+        this.client.expire(ttlKey, 86400 * 32) // 32天过期
+      ]);
+      
+      logger.debug(`📊 Recorded account cache TTL usage: ${accountId} - ${cacheTTL} - ${finalCacheCreateTokens} tokens`);
+    }
   }
 
   async getUsageStats(keyId) {

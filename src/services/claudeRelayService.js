@@ -333,34 +333,12 @@ class ClaudeRelayService {
     }
   }
 
-  // 🧹 移除TTL字段
+  // 🧹 移除TTL字段（已废弃，保留方法以兼容旧代码）
   _stripTtlFromCacheControl(body) {
-    if (!body || typeof body !== 'object') return;
-
-    const processContentArray = (contentArray) => {
-      if (!Array.isArray(contentArray)) return;
-      
-      contentArray.forEach(item => {
-        if (item && typeof item === 'object' && item.cache_control) {
-          if (item.cache_control.ttl) {
-            delete item.cache_control.ttl;
-            logger.debug('🧹 Removed ttl from cache_control');
-          }
-        }
-      });
-    };
-
-    if (Array.isArray(body.system)) {
-      processContentArray(body.system);
-    }
-
-    if (Array.isArray(body.messages)) {
-      body.messages.forEach(message => {
-        if (message && Array.isArray(message.content)) {
-          processContentArray(message.content);
-        }
-      });
-    }
+    // 不再删除TTL字段，以支持用户的缓存策略选择
+    // TTL用于区分5分钟缓存和1小时缓存，有不同的计费标准
+    logger.debug('⏳ Preserving cache_control TTL for proper billing');
+    return;
   }
 
   // 🌐 获取代理Agent
@@ -758,6 +736,43 @@ class ClaudeRelayService {
                   collectedUsageData.cache_creation_input_tokens = data.message.usage.cache_creation_input_tokens || 0;
                   collectedUsageData.cache_read_input_tokens = data.message.usage.cache_read_input_tokens || 0;
                   collectedUsageData.model = data.message.model;
+                  
+                  // 尝试检测缓存TTL（从请求体中获取）
+                  if (body && body.messages) {
+                    let cacheTTL = '5m'; // 默认5分钟
+                    let ttlDetected = false;
+                    
+                    // 检查system中的cache_control
+                    if (Array.isArray(body.system)) {
+                      body.system.forEach(item => {
+                        if (item && item.cache_control && item.cache_control.ttl) {
+                          const CostCalculator = require('../utils/costCalculator');
+                          cacheTTL = CostCalculator.parseCacheTTL(item.cache_control.ttl);
+                          ttlDetected = true;
+                        }
+                      });
+                    }
+                    
+                    // 检查messages中的cache_control
+                    if (!ttlDetected && Array.isArray(body.messages)) {
+                      body.messages.forEach(message => {
+                        if (message && Array.isArray(message.content)) {
+                          message.content.forEach(content => {
+                            if (!ttlDetected && content && content.cache_control && content.cache_control.ttl) {
+                              const CostCalculator = require('../utils/costCalculator');
+                              cacheTTL = CostCalculator.parseCacheTTL(content.cache_control.ttl);
+                              ttlDetected = true;
+                            }
+                          });
+                        }
+                      });
+                    }
+                    
+                    collectedUsageData.cache_ttl = cacheTTL;
+                    if (ttlDetected) {
+                      logger.info(`⏰ Detected cache TTL: ${cacheTTL}`);
+                    }
+                  }
                   
                   logger.info('📊 Collected input/cache data from message_start:', JSON.stringify(collectedUsageData));
                 }
